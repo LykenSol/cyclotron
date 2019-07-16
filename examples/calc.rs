@@ -32,6 +32,8 @@ fn main() {
     let mut parse_expr = memoize(
         |parse_expr, tokens: &[Token]| -> BTreeSet<(Rc<Expr>, &[Token])> {
             let mut parses = BTreeSet::new();
+
+            // `expr ::= expr OP expr`
             for (lhs, after_lhs) in parse_expr.call(tokens).clone() {
                 if let Some(&Token::Op(op)) = after_lhs.get(0) {
                     for (rhs, after_rhs) in parse_expr.call(&after_lhs[1..]).clone() {
@@ -40,9 +42,12 @@ fn main() {
                     }
                 }
             }
+
+            // `expr ::= LIT`
             if let Some(&Token::Lit(x)) = tokens.get(0) {
                 parses.insert((Rc::new(Expr::Const(x)), &tokens[1..]));
             }
+
             parses
         },
     );
