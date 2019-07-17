@@ -1,4 +1,4 @@
-use cyclotron::bruteforce::Memoized as _;
+use cyclotron::bruteforce;
 use cyclotron::lazy_set::LazySet as _;
 
 use std::collections::BTreeSet;
@@ -50,17 +50,21 @@ impl Expr {
     }
 }
 
-fn test<'a>(mut parse_expr: impl FnMut(&'a [Token]) -> BTreeSet<(Rc<Expr>, &'a [Token])>) {
+fn test<'a>(
+    name: &str,
+    mut parse_expr: impl FnMut(&'a [Token]) -> BTreeSet<(Rc<Expr>, &'a [Token])>,
+) {
+    eprintln!("Testing {}:", name);
     let mut parse_and_eval = |tokens| {
         let parses = parse_expr(tokens);
-        eprintln!("parse_expr({:?}) =", tokens);
+        eprintln!("  parse_expr({:?}) =", tokens);
         for (e, after) in &parses {
             eprintln!("    | {:?} // remaining: {:?}", e, after);
         }
         // Only try to eval full parses.
         for (e, after) in parses {
             if after.is_empty() {
-                eprintln!("eval({:?}) = {}", e, e.eval())
+                eprintln!("  eval({:?}) = {}", e, e.eval())
             }
         }
     };
@@ -77,35 +81,35 @@ fn test<'a>(mut parse_expr: impl FnMut(&'a [Token]) -> BTreeSet<(Rc<Expr>, &'a [
     ]);
 }
 
-fn bruteforce<'a>() {
-    use cyclotron::bruteforce::memoize;
+fn test_bruteforce<'a>() {
+    test(
+        "bruteforce",
+        bruteforce::memoize(
+            |parse_expr, tokens: &'a [Token]| -> BTreeSet<(Rc<Expr>, &'a [Token])> {
+                let mut parses = BTreeSet::new();
 
-    let mut parse_expr = memoize(
-        |parse_expr, tokens: &'a [Token]| -> BTreeSet<(Rc<Expr>, &'a [Token])> {
-            let mut parses = BTreeSet::new();
-
-            // `expr ::= expr OP expr`
-            for (lhs, tokens) in parse_expr.call(tokens) {
-                if let Some((op, tokens)) = eat(tokens, Token::op) {
-                    for (rhs, tokens) in parse_expr.call(tokens) {
-                        parses.insert((Rc::new(Expr::Bin(lhs.clone(), op, rhs)), tokens));
+                // `expr ::= expr OP expr`
+                for (lhs, tokens) in parse_expr(tokens) {
+                    if let Some((op, tokens)) = eat(tokens, Token::op) {
+                        for (rhs, tokens) in parse_expr(tokens) {
+                            parses.insert((Rc::new(Expr::Bin(lhs.clone(), op, rhs)), tokens));
+                        }
                     }
                 }
-            }
 
-            // `expr ::= LIT`
-            if let Some((x, tokens)) = eat(tokens, Token::lit) {
-                parses.insert((Rc::new(Expr::Const(x)), tokens));
-            }
+                // `expr ::= LIT`
+                if let Some((x, tokens)) = eat(tokens, Token::lit) {
+                    parses.insert((Rc::new(Expr::Const(x)), tokens));
+                }
 
-            parses
-        },
+                parses
+            },
+        ),
     );
-    test(|tokens| parse_expr.call(tokens));
 }
 
-fn lazy_set<'a>() {
-    use cyclotron::lazy_set::{call, memoize_by_bruteforce};
+fn test_lazy_set<'a>() {
+    use cyclotron::lazy_set::{call, to_eager};
 
     let parse_expr = call;
     let parse_expr = |tokens: &'a [Token]| {
@@ -124,14 +128,13 @@ fn lazy_set<'a>() {
     };
 
     // Bruteforce `LazySet` execution.
-    {
-        let mut parse_expr = memoize_by_bruteforce(parse_expr);
-        test(|tokens| parse_expr.call(tokens));
-    }
+    test(
+        "lazy_set/bruteforce",
+        bruteforce::memoize(to_eager(parse_expr)),
+    );
 }
 
 fn main() {
-    bruteforce();
-    eprintln!();
-    lazy_set();
+    test_bruteforce();
+    test_lazy_set();
 }

@@ -206,16 +206,14 @@ pub fn call<T>(x: T) -> sealed::Request<Call<T>> {
 
 // FIXME(eddyb) this should be in `LazyExt`, but `-> impl Trait`
 // doesn't work in traits yet, move it there whenever that changes.
-pub fn memoize_by_bruteforce<K, V, F, A>(
+pub fn to_eager<K, V, F, A>(
     lazy_f: F,
-) -> impl crate::bruteforce::Memoized<K, Value = BTreeSet<V>>
+) -> impl Fn(&mut dyn FnMut(K) -> BTreeSet<V>, K) -> BTreeSet<V> + Clone
 where
     K: Copy + Eq + Hash + fmt::Debug,
     V: Clone + Ord + fmt::Debug,
     F: FnOnce(K) -> A + Clone,
     A: LazySet<Call<K>, V, Item = V>,
 {
-    crate::bruteforce::memoize(move |f, k| -> BTreeSet<V> {
-        lazy_f.clone()(k).run(&mut |Call(k), _| f.call(k), None)
-    })
+    move |f, k| lazy_f.clone()(k).run(&mut |Call(k), _| f(k), None)
 }

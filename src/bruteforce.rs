@@ -2,12 +2,6 @@ use std::collections::{hash_map::Entry, HashMap};
 use std::hash::Hash;
 use std::mem;
 
-pub trait Memoized<K> {
-    type Value;
-
-    fn call(&mut self, k: K) -> Self::Value;
-}
-
 #[derive(Copy, Clone)]
 enum CacheState {
     Complete,
@@ -27,31 +21,30 @@ struct MemoState<K, V, F> {
     f: F,
 }
 
-pub fn memoize<K, V, F>(f: F) -> impl Memoized<K, Value = V>
+pub fn memoize<K, V, F>(f: F) -> impl FnMut(K) -> V
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
     V: Clone + Default + Eq + std::fmt::Debug,
-    F: Clone + Fn(&mut dyn Memoized<K, Value = V>, K) -> V,
+    F: Fn(&mut dyn FnMut(K) -> V, K) -> V + Clone,
 {
-    MemoState {
+    let mut state = MemoState {
         depth: 0,
         largest_cycle: None,
         cache: HashMap::new(),
         f,
-    }
+    };
+    move |k| state.call(k)
 }
 
 // FIXME(eddyb) try to figure out if dynamic dispatch can be avoided.
 // However, it will likely be devirtualized, as it's only used to pass
 // `self` to `F` in `fn call` below.
-impl<K, V, F> Memoized<K> for MemoState<K, V, F>
+impl<K, V, F> MemoState<K, V, F>
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
     V: Clone + Default + Eq + std::fmt::Debug,
-    F: Clone + Fn(&mut dyn Memoized<K, Value = V>, K) -> V,
+    F: Fn(&mut dyn FnMut(K) -> V, K) -> V + Clone,
 {
-    type Value = V;
-
     fn call(&mut self, k: K) -> V {
         let entry = match self.cache.entry(k) {
             Entry::Occupied(entry) => {
@@ -90,7 +83,7 @@ where
         loop {
             self.depth += 1;
             let f = self.f.clone();
-            let v = f(self, k);
+            let v = f(&mut |k| self.call(k), k);
             self.depth -= 1;
 
             let entry = self.cache.get_mut(&k).unwrap();
