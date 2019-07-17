@@ -216,3 +216,108 @@ where
 {
     move |f, k| lazy_f(k).run(&mut |Call(k), _| f(k), None)
 }
+
+// FIXME(eddyb) figure out module hierarchy here.
+pub mod depth_first {
+    use super::*;
+
+    use std::collections::{hash_map::Entry, HashMap};
+
+    struct CallState<K, V, A> {
+        // FIXME(eddyb) closures can't be Ord or Hash today.
+        // returns: BTreeSet<(K, A)>,
+        returns: Vec<(K, A)>,
+        results: BTreeSet<V>,
+    }
+
+    struct MemoState<K, V, A, F> {
+        calls: HashMap<K, CallState<K, V, A>>,
+        f: F,
+    }
+
+    pub fn memoize<K, V, A>(f: impl FnOnce(K) -> A + Clone) -> impl FnMut(K) -> BTreeSet<V>
+    where
+        K: Copy + Ord + Hash + fmt::Debug,
+        V: Clone + Ord + fmt::Debug,
+        A: LazySet<Call<K>, V, Item = V>,
+    {
+        let mut state = MemoState {
+            calls: HashMap::new(),
+            f,
+        };
+        move |k| match state.calls.entry(k) {
+            // `f(k)` complete (while technically `MemoState` could allow partial
+            // results to be exposed, the only entry-point into `state` is this
+            // closure, which is `FnMut`, disallowing reentrance).
+            Entry::Occupied(entry) => entry.get().results.clone(),
+
+            // `f(k)` never attempted before, we have to run it now.
+            Entry::Vacant(entry) => {
+                entry.insert(CallState {
+                    returns: Default::default(),
+                    results: Default::default(),
+                });
+                let f = state.f.clone();
+                state.run(k, f(k), None);
+                state.calls[&k].results.clone()
+            }
+        }
+    }
+
+    impl<K, V, A, F> MemoState<K, V, A, F>
+    where
+        K: Copy + Eq + Hash + fmt::Debug,
+        V: Clone + Ord + fmt::Debug,
+        A: LazySet<Call<K>, V, Item = V>,
+        F: FnOnce(K) -> A + Clone,
+    {
+        // FIXME(eddyb) try to make `LazySet::run` flexible enough to use it here.
+        fn run(&mut self, current: K, a: A, res: Option<V>) {
+            match a.step(res) {
+                // FIXME(eddyb) deduplicate some of this.
+                sealed::Step::Request(Call(k), a) => match self.calls.entry(k) {
+                    // `f(k)` in progress or completed.
+                    Entry::Occupied(entry) => {
+                        let call = entry.into_mut();
+                        // FIXME(eddyb) closures can't be Ord or Hash today.
+                        // if call.returns.insert((current, a.clone()))
+                        call.returns.push((current, a.clone()));
+                        {
+                            // FIXME(eddyb) try to avoid cloning the set.
+                            for v in call.results.clone() {
+                                self.run(current, a.clone(), Some(v));
+                            }
+                        }
+                    }
+
+                    // `f(k)` never attempted before, we have to start it now.
+                    Entry::Vacant(entry) => {
+                        let call = entry.insert(CallState {
+                            returns: Default::default(),
+                            results: Default::default(),
+                        });
+                        // FIXME(eddyb) closures can't be Ord or Hash today.
+                        // call.returns.insert((current, a.clone()));
+                        call.returns.push((current, a.clone()));
+                        let f = self.f.clone();
+                        self.run(k, f(k), None);
+                    }
+                },
+                sealed::Step::Fork(a, b) => {
+                    self.run(current, a, None);
+                    self.run(current, b, None);
+                }
+                sealed::Step::Return(None) => {}
+                sealed::Step::Return(Some(v)) => {
+                    let call = self.calls.get_mut(&current).unwrap();
+                    if call.results.insert(v.clone()) {
+                        // FIXME(eddyb) try to avoid cloning the set.
+                        for (caller, ret) in call.returns.clone() {
+                            self.run(caller, ret, Some(v.clone()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

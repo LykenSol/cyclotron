@@ -109,7 +109,7 @@ fn test_bruteforce<'a>() {
 }
 
 fn test_lazy_set<'a>() {
-    use cyclotron::lazy_set::{call, to_eager};
+    use cyclotron::lazy_set::{self, call};
 
     let parse_expr = call;
     let parse_expr = |tokens: &'a [Token]| {
@@ -130,7 +130,13 @@ fn test_lazy_set<'a>() {
     // Bruteforce `LazySet` execution.
     test(
         "lazy_set/bruteforce",
-        bruteforce::memoize(to_eager(parse_expr)),
+        bruteforce::memoize(lazy_set::to_eager(parse_expr)),
+    );
+
+    // Depth-first as-needed `LazySet` execution.
+    test(
+        "lazy_set/depth_first",
+        lazy_set::depth_first::memoize(parse_expr),
     );
 }
 

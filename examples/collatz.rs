@@ -30,7 +30,7 @@ fn test_bruteforce() {
 }
 
 fn test_lazy_set() {
-    use cyclotron::lazy_set::{call, one, to_eager};
+    use cyclotron::lazy_set::{self, call, one};
 
     let collatz_all = call;
     let collatz_all = |x| {
@@ -41,7 +41,13 @@ fn test_lazy_set() {
     // Bruteforce `LazySet` execution.
     test(
         "lazy_set/bruteforce",
-        bruteforce::memoize(to_eager(collatz_all)),
+        bruteforce::memoize(lazy_set::to_eager(collatz_all)),
+    );
+
+    // Depth-first as-needed `LazySet` execution.
+    test(
+        "lazy_set/depth_first",
+        lazy_set::depth_first::memoize(collatz_all),
     );
 }
 
