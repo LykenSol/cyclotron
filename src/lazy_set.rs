@@ -4,43 +4,70 @@ use std::hash::Hash;
 
 // HACK(eddyb) sealed traits/enums to keep them from being used outside of this module.
 mod sealed {
-    pub trait LazySet<CallK, CallV>: Clone {
+    pub enum Step<Req, A, R> {
+        Request(Req, A),
+        // FIXME(eddyb) use GATs to move this into a request.
+        Fork(A, A),
+        Return(R),
+    }
+
+    impl<Req, A, R> Step<Req, A, R> {
+        fn map_cont<B>(self, f: impl Fn(A) -> B) -> Step<Req, B, R> {
+            match self {
+                Step::Request(req, a) => Step::Request(req, f(a)),
+                Step::Fork(x, y) => Step::Fork(f(x), f(y)),
+                Step::Return(r) => Step::Return(r),
+            }
+        }
+
+        fn map_ret<S>(self, f: impl FnOnce(R) -> S) -> Step<Req, A, S> {
+            match self {
+                Step::Request(req, a) => Step::Request(req, a),
+                Step::Fork(x, y) => Step::Fork(x, y),
+                Step::Return(r) => Step::Return(f(r)),
+            }
+        }
+    }
+
+    pub trait LazySet<Req, Res>: Clone {
         type Item;
-        type Iter: Iterator<Item = Self::Item>;
-        fn compute(self, call: impl FnMut(CallK, Self), last_result: Option<CallV>) -> Self::Iter;
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>>;
     }
 
     #[derive(Clone)]
-    pub struct Once<T>(pub(super) T);
+    pub struct One<T>(pub(super) T);
 
-    impl<CallK, CallV, T: Clone> LazySet<CallK, CallV> for Once<T> {
+    impl<Req, Res, T: Clone> LazySet<Req, Res> for One<T> {
         type Item = T;
-        type Iter = std::iter::Once<T>;
-        fn compute(self, _: impl FnMut(CallK, Self), _: Option<CallV>) -> Self::Iter {
-            std::iter::once(self.0)
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
+            assert!(res.is_none());
+            Step::Return(Some(self.0))
+        }
+    }
+
+    impl<Req, Res, T: Clone> LazySet<Req, Res> for Option<T> {
+        type Item = T;
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
+            assert!(res.is_none());
+            Step::Return(self)
         }
     }
 
     #[derive(Clone)]
-    pub enum Call<CallK> {
-        Start(CallK),
+    pub enum Request<Req> {
+        Start(Req),
         Complete,
     }
 
-    impl<CallK: Clone, CallV> LazySet<CallK, CallV> for Call<CallK> {
-        type Item = CallV;
-        type Iter = std::option::IntoIter<CallV>;
-        fn compute(
-            self,
-            mut call: impl FnMut(CallK, Self),
-            last_result: Option<CallV>,
-        ) -> Self::Iter {
+    impl<Req: Clone, Res> LazySet<Req, Res> for Request<Req> {
+        type Item = Res;
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
             match self {
-                Call::Start(k) => {
-                    call(k, Call::Complete);
-                    None.into_iter()
+                Request::Start(req) => {
+                    assert!(res.is_none());
+                    Step::Request(req, Request::Complete)
                 }
-                Call::Complete => last_result.into_iter(),
+                Request::Complete => Step::Return(Some(res.unwrap())),
             }
         }
     }
@@ -52,75 +79,38 @@ mod sealed {
         JustB(B),
     }
 
-    type OptIter<I> = std::iter::Flatten<std::option::IntoIter<I>>;
-
-    fn opt_iter<I: Iterator>(opt: Option<I>) -> OptIter<I> {
-        opt.into_iter().flatten()
-    }
-
-    impl<CallK, CallV, A, B, T> LazySet<CallK, CallV> for Union<A, B>
+    impl<Req, Res, A, B, T> LazySet<Req, Res> for Union<A, B>
     where
-        A: LazySet<CallK, CallV, Item = T>,
-        B: LazySet<CallK, CallV, Item = T>,
+        A: LazySet<Req, Res, Item = T>,
+        B: LazySet<Req, Res, Item = T>,
     {
         type Item = T;
-        type Iter = std::iter::Chain<OptIter<A::Iter>, OptIter<B::Iter>>;
-        fn compute(
-            self,
-            mut call: impl FnMut(CallK, Self),
-            mut last_result: Option<CallV>,
-        ) -> Self::Iter {
-            let (a, b) = match self {
-                Union::Start(a, b) => (Some(a), Some(b)),
-                Union::JustA(a) => (Some(a), None),
-                Union::JustB(b) => (None, Some(b)),
-            };
-            opt_iter(a.map(|a| a.compute(|k, a| call(k, Union::JustA(a)), last_result.take())))
-                .chain(opt_iter(b.map(|b| {
-                    b.compute(|k, b| call(k, Union::JustB(b)), last_result)
-                })))
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
+            match self {
+                Union::Start(a, b) => {
+                    assert!(res.is_none());
+                    Step::Fork(Union::JustA(a), Union::JustB(b))
+                }
+                Union::JustA(a) => a.step(res).map_cont(Union::JustA),
+                Union::JustB(b) => b.step(res).map_cont(Union::JustB),
+            }
         }
     }
 
     #[derive(Clone)]
     pub struct Map<A, F>(pub(super) A, pub(super) F);
 
-    impl<CallK, CallV, A, F, T> LazySet<CallK, CallV> for Map<A, F>
+    impl<Req, Res, A, F, T> LazySet<Req, Res> for Map<A, F>
     where
-        A: LazySet<CallK, CallV>,
-        F: Fn(A::Item) -> T + Clone,
+        A: LazySet<Req, Res>,
+        F: FnOnce(A::Item) -> T + Clone,
     {
         type Item = T;
-        type Iter = std::iter::Map<A::Iter, F>;
-        fn compute(
-            self,
-            mut call: impl FnMut(CallK, Self),
-            last_result: Option<CallV>,
-        ) -> Self::Iter {
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
             let Map(a, f) = self;
-            a.compute(|k, a| call(k, Map(a, f.clone())), last_result)
-                .map(f)
-        }
-    }
-
-    #[derive(Clone)]
-    pub struct FilterMap<A, F>(pub(super) A, pub(super) F);
-
-    impl<CallK, CallV, A, F, T> LazySet<CallK, CallV> for FilterMap<A, F>
-    where
-        A: LazySet<CallK, CallV>,
-        F: Fn(A::Item) -> Option<T> + Clone,
-    {
-        type Item = T;
-        type Iter = std::iter::FilterMap<A::Iter, F>;
-        fn compute(
-            self,
-            mut call: impl FnMut(CallK, Self),
-            last_result: Option<CallV>,
-        ) -> Self::Iter {
-            let FilterMap(a, f) = self;
-            a.compute(|k, a| call(k, FilterMap(a, f.clone())), last_result)
-                .filter_map(f)
+            a.step(res)
+                .map_cont(|a| Map(a, f.clone()))
+                .map_ret(|r| r.map(f))
         }
     }
 
@@ -130,107 +120,100 @@ mod sealed {
         Then(B),
     }
 
-    impl<CallK, CallV, A, B, F> LazySet<CallK, CallV> for FlatMap<A, B, F>
+    impl<Req, Res, A, B, F> LazySet<Req, Res> for FlatMap<A, B, F>
     where
-        A: LazySet<CallK, CallV>,
-        B: LazySet<CallK, CallV>,
-        F: Fn(A::Item) -> B + Clone,
+        A: LazySet<Req, Res>,
+        B: LazySet<Req, Res>,
+        F: FnOnce(A::Item) -> B + Clone,
     {
         type Item = B::Item;
-        // FIXME(eddyb) this is inefficient, but it gets around having
-        // to return an iterator which captures `call`.
-        type Iter = std::vec::IntoIter<Self::Item>;
-        fn compute(
-            self,
-            mut call: impl FnMut(CallK, Self),
-            mut last_result: Option<CallV>,
-        ) -> Self::Iter {
-            let (a_map_f, b) = match self {
-                FlatMap::Start(a, f) => (
-                    Some(
-                        a.compute(
-                            |k, a| call(k, FlatMap::Start(a, f.clone())),
-                            last_result.take(),
-                        )
-                        .map(f),
-                    ),
-                    None,
-                ),
-                FlatMap::Then(b) => (None, Some(b)),
-            };
-            a_map_f
-                .into_iter()
-                .flatten()
-                .chain(b.into_iter())
-                .flat_map(|b| b.compute(|k, b| call(k, FlatMap::Then(b)), last_result.take()))
-                .collect::<Vec<_>>()
-                .into_iter()
+        fn step(self, res: Option<Res>) -> Step<Req, Self, Option<Self::Item>> {
+            match self {
+                FlatMap::Start(a, f) => match a.step(res) {
+                    Step::Request(req, a) => Step::Request(req, FlatMap::Start(a, f)),
+                    Step::Fork(x, y) => {
+                        Step::Fork(FlatMap::Start(x, f.clone()), FlatMap::Start(y, f))
+                    }
+                    Step::Return(None) => Step::Return(None),
+                    Step::Return(Some(r)) => f(r).step(None).map_cont(FlatMap::Then),
+                },
+                FlatMap::Then(b) => b.step(res).map_cont(FlatMap::Then),
+            }
         }
     }
 }
 
 // NOTE(eddyb) this would normally be named `LazySetExt`, but we want to allow
 // users to use this trait in bounds, without exposing the sealed one.
-pub trait LazySet<CallK, CallV>: sealed::LazySet<CallK, CallV> {
-    fn union<B: LazySet<CallK, CallV, Item = Self::Item>>(self, b: B) -> sealed::Union<Self, B> {
+pub trait LazySet<Req, Res>: sealed::LazySet<Req, Res> {
+    fn union<B: LazySet<Req, Res, Item = Self::Item>>(self, b: B) -> sealed::Union<Self, B> {
         sealed::Union::Start(self, b)
     }
 
-    fn map<F: Fn(Self::Item) -> T, T>(self, f: F) -> sealed::Map<Self, F> {
+    fn map<F: FnOnce(Self::Item) -> T, T>(self, f: F) -> sealed::Map<Self, F> {
         sealed::Map(self, f)
     }
 
-    fn filter_map<F: Fn(Self::Item) -> Option<T>, T>(self, f: F) -> sealed::FilterMap<Self, F> {
-        sealed::FilterMap(self, f)
-    }
-
-    fn flat_map<B: LazySet<CallK, CallV>, F: Fn(Self::Item) -> B>(
+    fn flat_map<B: LazySet<Req, Res>, F: FnOnce(Self::Item) -> B>(
         self,
         f: F,
     ) -> sealed::FlatMap<Self, B, F> {
         sealed::FlatMap::Start(self, f)
     }
+
+    fn run_eagerly(
+        self,
+        handle: &mut impl FnMut(Req) -> BTreeSet<Res>,
+        res: Option<Res>,
+    ) -> BTreeSet<Self::Item>
+    where
+        Res: Ord,
+        Self::Item: Ord,
+    {
+        let mut output = BTreeSet::new();
+        match self.step(res) {
+            sealed::Step::Request(req, a) => {
+                for res in handle(req) {
+                    output.extend(a.clone().run_eagerly(handle, Some(res)));
+                }
+            }
+            sealed::Step::Fork(a, b) => {
+                output.extend(a.run_eagerly(handle, None));
+                output.extend(b.run_eagerly(handle, None));
+            }
+            sealed::Step::Return(v) => output.extend(v),
+        }
+        output
+    }
 }
 
-impl<CallK, CallV, A: sealed::LazySet<CallK, CallV>> LazySet<CallK, CallV> for A {}
+impl<Req, Res, A: sealed::LazySet<Req, Res>> LazySet<Req, Res> for A {}
 
-pub fn once<T>(v: T) -> sealed::Once<T> {
-    sealed::Once(v)
+pub fn one<T>(x: T) -> sealed::One<T> {
+    sealed::One(x)
 }
 
-pub fn call<CallK>(k: CallK) -> sealed::Call<CallK> {
-    sealed::Call::Start(k)
+pub fn request<Req>(req: Req) -> sealed::Request<Req> {
+    sealed::Request::Start(req)
+}
+
+#[derive(Clone)]
+pub struct Call<T>(pub T);
+
+pub fn call<T>(x: T) -> sealed::Request<Call<T>> {
+    request(Call(x))
 }
 
 // FIXME(eddyb) this should be in `LazyExt`, but `-> impl Trait`
 // doesn't work in traits yet, move it there whenever that changes.
-pub fn to_eager<K, V, F, A>(lazy_call: F) -> impl crate::eager::Memoized<K, Value = BTreeSet<V>>
+pub fn memoize_eagerly<K, V, F, A>(lazy_f: F) -> impl crate::eager::Memoized<K, Value = BTreeSet<V>>
 where
     K: Copy + Eq + Hash + fmt::Debug,
     V: Clone + Ord + fmt::Debug,
-    F: Fn(K) -> A + Clone,
-    A: LazySet<K, V, Item = V>,
+    F: FnOnce(K) -> A + Clone,
+    A: LazySet<Call<K>, V, Item = V>,
 {
-    fn compute_eagerly<K, V: Ord>(
-        lazy: impl LazySet<K, V, Item = V>,
-        call: &mut impl FnMut(K) -> BTreeSet<V>,
-        last_result: Option<V>,
-        output: &mut BTreeSet<V>,
-    ) {
-        let values = lazy.compute(
-            |k, cont| {
-                for v in call(k) {
-                    compute_eagerly(cont.clone(), call, Some(v), output);
-                }
-            },
-            last_result,
-        );
-        output.extend(values);
-    }
-
     crate::eager::memoize(move |f, k| -> BTreeSet<V> {
-        let mut set = BTreeSet::new();
-        compute_eagerly(lazy_call(k), &mut |k| f.call(k).clone(), None, &mut set);
-        set
+        lazy_f.clone()(k).run_eagerly(&mut |Call(k)| f.call(k).clone(), None)
     })
 }

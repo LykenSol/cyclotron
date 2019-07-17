@@ -1,4 +1,5 @@
 use cyclotron::eager::Memoized as _;
+use cyclotron::lazy_set::LazySet as _;
 
 use std::collections::BTreeSet;
 
@@ -27,17 +28,23 @@ fn eager() {
     test(|x| collatz_all.call(x).clone());
 }
 
-fn lazy_set_to_eager() {
-    use cyclotron::lazy_set::{call as collatz_all, once, to_eager, LazySet as _};
+fn lazy_set() {
+    use cyclotron::lazy_set::{call, memoize_eagerly, one};
 
-    let mut collatz_all = to_eager(|x| {
+    let collatz_all = call;
+    let collatz_all = |x| {
         let next = collatz_next(x);
-        collatz_all(next).union(once(next))
-    });
-    test(|x| collatz_all.call(x).clone());
+        collatz_all(next).union(one(next))
+    };
+
+    // Eager `LazySet` execution.
+    {
+        let mut collatz_all = memoize_eagerly(collatz_all);
+        test(|x| collatz_all.call(x).clone());
+    }
 }
 
 fn main() {
     eager();
-    lazy_set_to_eager();
+    lazy_set();
 }

@@ -1,12 +1,34 @@
 use cyclotron::eager::Memoized as _;
+use cyclotron::lazy_set::LazySet as _;
 
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 enum Token {
-    Lit(i32),
     Op(char),
+    Lit(i32),
+}
+
+impl Token {
+    fn op(self) -> Option<char> {
+        match self {
+            Token::Op(op) => Some(op),
+            _ => None,
+        }
+    }
+    fn lit(self) -> Option<i32> {
+        match self {
+            Token::Lit(x) => Some(x),
+            _ => None,
+        }
+    }
+}
+
+fn eat<T>(tokens: &[Token], f: impl FnOnce(Token) -> Option<T>) -> Option<(T, &[Token])> {
+    tokens
+        .split_first()
+        .and_then(|(&token, tokens)| f(token).map(|x| (x, tokens)))
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -63,18 +85,17 @@ fn eager<'a>() {
             let mut parses = BTreeSet::new();
 
             // `expr ::= expr OP expr`
-            for (lhs, after_lhs) in parse_expr.call(tokens).clone() {
-                if let Some(&Token::Op(op)) = after_lhs.get(0) {
-                    for (rhs, after_rhs) in parse_expr.call(&after_lhs[1..]).clone() {
-                        parses
-                            .insert((Rc::new(Expr::Bin(lhs.clone(), op, rhs.clone())), after_rhs));
+            for (lhs, tokens) in parse_expr.call(tokens).clone() {
+                if let Some((op, tokens)) = eat(tokens, Token::op) {
+                    for (rhs, tokens) in parse_expr.call(tokens).clone() {
+                        parses.insert((Rc::new(Expr::Bin(lhs.clone(), op, rhs)), tokens));
                     }
                 }
             }
 
             // `expr ::= LIT`
-            if let Some(&Token::Lit(x)) = tokens.get(0) {
-                parses.insert((Rc::new(Expr::Const(x)), &tokens[1..]));
+            if let Some((x, tokens)) = eat(tokens, Token::lit) {
+                parses.insert((Rc::new(Expr::Const(x)), tokens));
             }
 
             parses
@@ -83,43 +104,34 @@ fn eager<'a>() {
     test(|tokens| parse_expr.call(tokens).clone());
 }
 
-fn lazy_set_to_eager<'a>() {
-    use cyclotron::lazy_set::{call as parse_expr, once, to_eager, LazySet};
+fn lazy_set<'a>() {
+    use cyclotron::lazy_set::{call, memoize_eagerly};
 
-    let mut parse_expr = to_eager(|tokens: &'a [Token]| {
+    let parse_expr = call;
+    let parse_expr = |tokens: &'a [Token]| {
         // `expr ::= expr OP expr`
         parse_expr(tokens)
-            .filter_map(
-                |(lhs, after_lhs): (Rc<Expr>, &'a [Token])| match after_lhs.get(0) {
-                    Some(&Token::Op(op)) => Some((lhs, op, &after_lhs[1..])),
-                    _ => None,
-                },
-            )
-            .flat_map(|(lhs, op, after_op)| {
-                parse_expr(after_op).map(move |(rhs, after_rhs)| {
-                    (Rc::new(Expr::Bin(lhs.clone(), op, rhs)), after_rhs)
+            .flat_map(|(lhs, tokens)| {
+                eat(tokens, Token::op).flat_map(|(op, tokens)| {
+                    parse_expr(tokens)
+                        .map(move |(rhs, tokens)| (Rc::new(Expr::Bin(lhs, op, rhs)), tokens))
                 })
             })
             .union(
                 // `expr ::= LIT`
-                // FIXME(eddyb) inference fails for `filter_map`'s `CallK` and `CallV`
-                // for some reasons. Possible fixes:
-                //   * replace this `once(...).filter_map(...)` hack with an `Option` `LazySet`
-                //   * make `CallK` and `CallV` associated items
-                LazySet::<&'a [Token], (Rc<Expr>, &'a [Token])>::filter_map(
-                    once(tokens),
-                    |tokens| match tokens.get(0) {
-                        Some(&Token::Lit(x)) => Some((Rc::new(Expr::Const(x)), &tokens[1..])),
-                        _ => None,
-                    },
-                ),
+                eat(tokens, Token::lit).map(|(x, tokens)| (Rc::new(Expr::Const(x)), tokens)),
             )
-    });
-    test(|tokens| parse_expr.call(tokens).clone());
+    };
+
+    // Eager `LazySet` execution.
+    {
+        let mut parse_expr = memoize_eagerly(parse_expr);
+        test(|tokens| parse_expr.call(tokens).clone());
+    }
 }
 
 fn main() {
     eager();
     eprintln!();
-    lazy_set_to_eager();
+    lazy_set();
 }
