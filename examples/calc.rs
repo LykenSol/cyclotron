@@ -113,14 +113,14 @@ fn lazy_set<'a>() {
         parse_expr(tokens)
             .flat_map(|(lhs, tokens)| {
                 eat(tokens, Token::op).flat_map(|(op, tokens)| {
-                    parse_expr(tokens)
-                        .map(move |(rhs, tokens)| (Rc::new(Expr::Bin(lhs, op, rhs)), tokens))
+                    parse_expr(tokens).map(move |(rhs, tokens)| (Expr::Bin(lhs, op, rhs), tokens))
                 })
             })
             .union(
                 // `expr ::= LIT`
-                eat(tokens, Token::lit).map(|(x, tokens)| (Rc::new(Expr::Const(x)), tokens)),
+                eat(tokens, Token::lit).map(|(x, tokens)| (Expr::Const(x), tokens)),
             )
+            .map(|(e, tokens)| (Rc::new(e), tokens))
     };
 
     // Eager `LazySet` execution.
