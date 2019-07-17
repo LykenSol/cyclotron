@@ -216,6 +216,6 @@ where
     A: LazySet<Call<K>, V, Item = V>,
 {
     crate::bruteforce::memoize(move |f, k| -> BTreeSet<V> {
-        lazy_f.clone()(k).run(&mut |Call(k), _| f.call(k).clone(), None)
+        lazy_f.clone()(k).run(&mut |Call(k), _| f.call(k), None)
     })
 }

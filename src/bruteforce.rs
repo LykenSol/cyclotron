@@ -5,7 +5,7 @@ use std::mem;
 pub trait Memoized<K> {
     type Value;
 
-    fn call(&mut self, k: K) -> &Self::Value;
+    fn call(&mut self, k: K) -> Self::Value;
 }
 
 #[derive(Copy, Clone)]
@@ -30,7 +30,7 @@ struct MemoState<K, V, F> {
 pub fn memoize<K, V, F>(f: F) -> impl Memoized<K, Value = V>
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
-    V: Default + Eq + std::fmt::Debug,
+    V: Clone + Default + Eq + std::fmt::Debug,
     F: Clone + Fn(&mut dyn Memoized<K, Value = V>, K) -> V,
 {
     MemoState {
@@ -47,18 +47,17 @@ where
 impl<K, V, F> Memoized<K> for MemoState<K, V, F>
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
-    V: Default + Eq + std::fmt::Debug,
+    V: Clone + Default + Eq + std::fmt::Debug,
     F: Clone + Fn(&mut dyn Memoized<K, Value = V>, K) -> V,
 {
     type Value = V;
 
-    fn call(&mut self, k: K) -> &V {
+    fn call(&mut self, k: K) -> V {
         let entry = match self.cache.entry(k) {
             Entry::Occupied(entry) => {
                 let entry = entry.into_mut();
                 match &mut entry.state {
-                    // FIXME(eddyb) `return &entry.value` once Polonius is the default.
-                    CacheState::Complete => return &self.cache[&k].value,
+                    CacheState::Complete => return entry.value.clone(),
                     CacheState::InProgress {
                         entry_depth,
                         accessed,
@@ -69,8 +68,7 @@ where
                         self.largest_cycle =
                             Some(self.largest_cycle.unwrap_or(*entry_depth).min(*entry_depth));
 
-                        // FIXME(eddyb) `return &entry.value` once Polonius is the default.
-                        return &self.cache[&k].value;
+                        return entry.value.clone();
                     }
                     CacheState::Invalid => {
                         entry.value = V::default();
@@ -134,8 +132,7 @@ where
                 entry.state = CacheState::Invalid;
             }
 
-            // FIXME(eddyb) `return &entry.value` once Polonius is the default.
-            return &self.cache.get_mut(&k).unwrap().value;
+            return entry.value.clone();
         }
     }
 }

@@ -21,11 +21,11 @@ fn bruteforce() {
 
     let mut collatz_all = memoize(|collatz_all, x| -> BTreeSet<u64> {
         let next = collatz_next(x);
-        let mut set = collatz_all.call(next).clone();
+        let mut set = collatz_all.call(next);
         set.insert(next);
         set
     });
-    test(|x| collatz_all.call(x).clone());
+    test(|x| collatz_all.call(x));
 }
 
 fn lazy_set() {
@@ -40,7 +40,7 @@ fn lazy_set() {
     // Bruteforce `LazySet` execution.
     {
         let mut collatz_all = memoize_by_bruteforce(collatz_all);
-        test(|x| collatz_all.call(x).clone());
+        test(|x| collatz_all.call(x));
     }
 }
 

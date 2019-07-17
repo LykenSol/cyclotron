@@ -85,9 +85,9 @@ fn bruteforce<'a>() {
             let mut parses = BTreeSet::new();
 
             // `expr ::= expr OP expr`
-            for (lhs, tokens) in parse_expr.call(tokens).clone() {
+            for (lhs, tokens) in parse_expr.call(tokens) {
                 if let Some((op, tokens)) = eat(tokens, Token::op) {
-                    for (rhs, tokens) in parse_expr.call(tokens).clone() {
+                    for (rhs, tokens) in parse_expr.call(tokens) {
                         parses.insert((Rc::new(Expr::Bin(lhs.clone(), op, rhs)), tokens));
                     }
                 }
@@ -101,7 +101,7 @@ fn bruteforce<'a>() {
             parses
         },
     );
-    test(|tokens| parse_expr.call(tokens).clone());
+    test(|tokens| parse_expr.call(tokens));
 }
 
 fn lazy_set<'a>() {
@@ -126,7 +126,7 @@ fn lazy_set<'a>() {
     // Bruteforce `LazySet` execution.
     {
         let mut parse_expr = memoize_by_bruteforce(parse_expr);
-        test(|tokens| parse_expr.call(tokens).clone());
+        test(|tokens| parse_expr.call(tokens));
     }
 }
 
