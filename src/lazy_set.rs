@@ -161,9 +161,9 @@ pub trait LazySet<Req, Res>: sealed::LazySet<Req, Res> {
         sealed::FlatMap::Start(self, f)
     }
 
-    fn run_eagerly(
+    fn run(
         self,
-        handle: &mut impl FnMut(Req) -> BTreeSet<Res>,
+        handle: &mut impl FnMut(Req, Self) -> BTreeSet<Res>,
         res: Option<Res>,
     ) -> BTreeSet<Self::Item>
     where
@@ -173,13 +173,13 @@ pub trait LazySet<Req, Res>: sealed::LazySet<Req, Res> {
         let mut output = BTreeSet::new();
         match self.step(res) {
             sealed::Step::Request(req, a) => {
-                for res in handle(req) {
-                    output.extend(a.clone().run_eagerly(handle, Some(res)));
+                for res in handle(req, a.clone()) {
+                    output.extend(a.clone().run(handle, Some(res)));
                 }
             }
             sealed::Step::Fork(a, b) => {
-                output.extend(a.run_eagerly(handle, None));
-                output.extend(b.run_eagerly(handle, None));
+                output.extend(a.run(handle, None));
+                output.extend(b.run(handle, None));
             }
             sealed::Step::Return(v) => output.extend(v),
         }
@@ -206,14 +206,16 @@ pub fn call<T>(x: T) -> sealed::Request<Call<T>> {
 
 // FIXME(eddyb) this should be in `LazyExt`, but `-> impl Trait`
 // doesn't work in traits yet, move it there whenever that changes.
-pub fn memoize_eagerly<K, V, F, A>(lazy_f: F) -> impl crate::eager::Memoized<K, Value = BTreeSet<V>>
+pub fn memoize_by_bruteforce<K, V, F, A>(
+    lazy_f: F,
+) -> impl crate::bruteforce::Memoized<K, Value = BTreeSet<V>>
 where
     K: Copy + Eq + Hash + fmt::Debug,
     V: Clone + Ord + fmt::Debug,
     F: FnOnce(K) -> A + Clone,
     A: LazySet<Call<K>, V, Item = V>,
 {
-    crate::eager::memoize(move |f, k| -> BTreeSet<V> {
-        lazy_f.clone()(k).run_eagerly(&mut |Call(k)| f.call(k).clone(), None)
+    crate::bruteforce::memoize(move |f, k| -> BTreeSet<V> {
+        lazy_f.clone()(k).run(&mut |Call(k), _| f.call(k).clone(), None)
     })
 }

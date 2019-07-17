@@ -1,4 +1,4 @@
-use cyclotron::eager::Memoized as _;
+use cyclotron::bruteforce::Memoized as _;
 use cyclotron::lazy_set::LazySet as _;
 
 use std::collections::BTreeSet;
@@ -77,8 +77,8 @@ fn test<'a>(mut parse_expr: impl FnMut(&'a [Token]) -> BTreeSet<(Rc<Expr>, &'a [
     ]);
 }
 
-fn eager<'a>() {
-    use cyclotron::eager::memoize;
+fn bruteforce<'a>() {
+    use cyclotron::bruteforce::memoize;
 
     let mut parse_expr = memoize(
         |parse_expr, tokens: &'a [Token]| -> BTreeSet<(Rc<Expr>, &'a [Token])> {
@@ -105,7 +105,7 @@ fn eager<'a>() {
 }
 
 fn lazy_set<'a>() {
-    use cyclotron::lazy_set::{call, memoize_eagerly};
+    use cyclotron::lazy_set::{call, memoize_by_bruteforce};
 
     let parse_expr = call;
     let parse_expr = |tokens: &'a [Token]| {
@@ -123,15 +123,15 @@ fn lazy_set<'a>() {
             .map(|(e, tokens)| (Rc::new(e), tokens))
     };
 
-    // Eager `LazySet` execution.
+    // Bruteforce `LazySet` execution.
     {
-        let mut parse_expr = memoize_eagerly(parse_expr);
+        let mut parse_expr = memoize_by_bruteforce(parse_expr);
         test(|tokens| parse_expr.call(tokens).clone());
     }
 }
 
 fn main() {
-    eager();
+    bruteforce();
     eprintln!();
     lazy_set();
 }

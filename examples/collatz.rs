@@ -1,4 +1,4 @@
-use cyclotron::eager::Memoized as _;
+use cyclotron::bruteforce::Memoized as _;
 use cyclotron::lazy_set::LazySet as _;
 
 use std::collections::BTreeSet;
@@ -16,8 +16,8 @@ fn test(mut collatz_all: impl FnMut(u64) -> BTreeSet<u64>) {
     eprintln!("collatz_all(2) = {:?}", collatz_all(2));
 }
 
-fn eager() {
-    use cyclotron::eager::memoize;
+fn bruteforce() {
+    use cyclotron::bruteforce::memoize;
 
     let mut collatz_all = memoize(|collatz_all, x| -> BTreeSet<u64> {
         let next = collatz_next(x);
@@ -29,7 +29,7 @@ fn eager() {
 }
 
 fn lazy_set() {
-    use cyclotron::lazy_set::{call, memoize_eagerly, one};
+    use cyclotron::lazy_set::{call, memoize_by_bruteforce, one};
 
     let collatz_all = call;
     let collatz_all = |x| {
@@ -37,14 +37,14 @@ fn lazy_set() {
         collatz_all(next).union(one(next))
     };
 
-    // Eager `LazySet` execution.
+    // Bruteforce `LazySet` execution.
     {
-        let mut collatz_all = memoize_eagerly(collatz_all);
+        let mut collatz_all = memoize_by_bruteforce(collatz_all);
         test(|x| collatz_all.call(x).clone());
     }
 }
 
 fn main() {
-    eager();
+    bruteforce();
     lazy_set();
 }
