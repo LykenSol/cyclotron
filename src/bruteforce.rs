@@ -21,11 +21,10 @@ struct MemoState<K, V, F> {
     f: F,
 }
 
-pub fn memoize<K, V, F>(f: F) -> impl FnMut(K) -> V
+pub fn memoize<K, V>(f: impl FnOnce(&mut dyn FnMut(K) -> V, K) -> V + Clone) -> impl FnMut(K) -> V
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
     V: Clone + Default + Eq + std::fmt::Debug,
-    F: Fn(&mut dyn FnMut(K) -> V, K) -> V + Clone,
 {
     let mut state = MemoState {
         depth: 0,
@@ -43,7 +42,7 @@ impl<K, V, F> MemoState<K, V, F>
 where
     K: Copy + Eq + Hash + std::fmt::Debug,
     V: Clone + Default + Eq + std::fmt::Debug,
-    F: Fn(&mut dyn FnMut(K) -> V, K) -> V + Clone,
+    F: FnOnce(&mut dyn FnMut(K) -> V, K) -> V + Clone,
 {
     fn call(&mut self, k: K) -> V {
         let entry = match self.cache.entry(k) {

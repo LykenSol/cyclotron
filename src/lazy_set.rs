@@ -206,14 +206,13 @@ pub fn call<T>(x: T) -> sealed::Request<Call<T>> {
 
 // FIXME(eddyb) this should be in `LazyExt`, but `-> impl Trait`
 // doesn't work in traits yet, move it there whenever that changes.
-pub fn to_eager<K, V, F, A>(
-    lazy_f: F,
-) -> impl Fn(&mut dyn FnMut(K) -> BTreeSet<V>, K) -> BTreeSet<V> + Clone
+pub fn to_eager<K, V, A>(
+    lazy_f: impl FnOnce(K) -> A + Clone,
+) -> impl FnOnce(&mut dyn FnMut(K) -> BTreeSet<V>, K) -> BTreeSet<V> + Clone
 where
     K: Copy + Eq + Hash + fmt::Debug,
     V: Clone + Ord + fmt::Debug,
-    F: FnOnce(K) -> A + Clone,
     A: LazySet<Call<K>, V, Item = V>,
 {
-    move |f, k| lazy_f.clone()(k).run(&mut |Call(k), _| f(k), None)
+    move |f, k| lazy_f(k).run(&mut |Call(k), _| f(k), None)
 }
