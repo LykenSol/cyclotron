@@ -1,6 +1,6 @@
 [package]
 name = "cyclotron"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Eduard-Mihai Burtescu <edy.burt@gmail.com>"]
 edition = "2018"
 repository = "https://github.com/LykenSol/cyclotron"
