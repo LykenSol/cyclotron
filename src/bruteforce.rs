@@ -16,7 +16,7 @@ struct CacheEntry<T> {
 
 struct MemoState<K, V, F> {
     depth: usize,
-    largest_cycle: Option<usize>,
+    largest_used_cycle: Option<usize>,
     cache: HashMap<K, CacheEntry<V>>,
     f: F,
 }
@@ -28,7 +28,7 @@ where
 {
     let mut state = MemoState {
         depth: 0,
-        largest_cycle: None,
+        largest_used_cycle: None,
         cache: HashMap::new(),
         f,
     };
@@ -56,9 +56,9 @@ where
                     } => {
                         *accessed = true;
 
-                        // Keep track of the largest overall cycle.
-                        self.largest_cycle =
-                            Some(self.largest_cycle.unwrap_or(*entry_depth).min(*entry_depth));
+                        // Keep track of the largest overall cycle we depend on.
+                        self.largest_used_cycle =
+                            Some(self.largest_used_cycle.unwrap_or(*entry_depth).min(*entry_depth));
 
                         return entry.value.clone();
                     }
@@ -79,8 +79,12 @@ where
             accessed: false,
         };
 
+        // Ignore any outer cycles (in case we don't end up depending on them).
+        let outer_largest_used_cycle = self.largest_used_cycle.take();
+
         loop {
             self.depth += 1;
+            self.largest_used_cycle = None;
             let f = self.f.clone();
             let v = f(&mut |k| self.call(k), k);
             self.depth -= 1;
@@ -109,19 +113,22 @@ where
 
             entry.state = CacheState::Complete;
 
-            // If we are the largest cycle, it's time to exit it.
-            if self.largest_cycle == Some(self.depth) {
-                self.largest_cycle = None;
-
+            // If we are the largest cycle in use, it's time to exit it.
+            if self.largest_used_cycle == Some(self.depth) {
                 // Recurse one more time to replace `Invalid` cache entries.
                 continue;
             }
 
-            // Poison any cached entries that happen to have been computed
-            // during a cycle, so that further accesses recompute them.
-            if let Some(cycle_entry_depth) = self.largest_cycle {
+            // Poison any cached entries that happen to depend on a cycle,
+            // so that further accesses recompute them.
+            if let Some(cycle_entry_depth) = self.largest_used_cycle {
                 assert!(cycle_entry_depth < self.depth);
                 entry.state = CacheState::Invalid;
+            }
+
+            if let Some(cycle_entry_depth) = outer_largest_used_cycle {
+                self.largest_used_cycle =
+                    Some(self.largest_used_cycle.unwrap_or(cycle_entry_depth).min(cycle_entry_depth));
             }
 
             return entry.value.clone();
